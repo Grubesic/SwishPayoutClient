@@ -46,6 +46,16 @@ compose.desktop {
         mainClass = "com.rogr.swishpayoutclient.MainKt"
 
         nativeDistributions {
+
+            modules(
+                "java.base",
+                "java.desktop",
+                "java.logging",
+                "java.naming",
+                "java.xml",
+                "java.net.http",   // <-- REQUIRED for Ktor Java engine
+                "jdk.crypto.ec"    // <-- TLS with EC certs
+            )
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "AstonMartinPays"
             packageVersion = "1.0.0"

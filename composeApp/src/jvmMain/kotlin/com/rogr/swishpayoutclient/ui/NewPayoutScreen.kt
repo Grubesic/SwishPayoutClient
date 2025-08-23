@@ -72,7 +72,7 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                         explicitNulls = false
                         prettyPrint = false
                     })
-                    val sig = signSha512withRsa(canonical.toByteArray(Charsets.UTF_8), signing.privateKey)
+                    val sig = signSwish(canonical, signing.privateKey)
 
                     previewPayload = canonical
                     previewSig = sig
