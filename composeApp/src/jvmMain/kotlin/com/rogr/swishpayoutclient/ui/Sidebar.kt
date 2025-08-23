@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun Sidebar(onSelect: (String)->Unit, current: String) {
-    Text("Nordbil", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+    Text("NordbilPay", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(24.dp))
 
     @Composable

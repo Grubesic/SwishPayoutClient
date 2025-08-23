@@ -39,6 +39,8 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
 
     var isSigValidBeforeSend by remember { mutableStateOf<Boolean?>(null) }
 
+    var isSubmitting by remember { mutableStateOf(false) }
+
 
     // Center + max width
     Box(
@@ -109,103 +111,114 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick = {
+                        isSubmitting = true
+
                         scope.launch(Dispatchers.IO) {
-                            // show initial row
-                            live = PayoutLiveStatus(
-                                uuid = "…", // temp, replaced below
-                                amount = "${amount} kr",
-                                receiver = payeeAlias,
-                                status = "CREATING",
-                                loading = true
-                            )
-
-                            val resText = runCatching {
-                                val signing = loadSigningMaterial(
-                                    settings.signingP12Path,
-                                    signingPass.toCharArray()
-                                )
-                                val ssl =
-                                    buildSslContext(settings.tlsP12Path, tlsPass.toCharArray())
-                                val client = SwishClient(settings.baseUrl, ssl)
-
-                                val uuid = UUID.randomUUID().toString().replace("-", "").uppercase()
-                                live = live?.copy(uuid = uuid)
-
-                                val payload = PayoutPayload(
-                                    payoutInstructionUUID = uuid,
-                                    payerPaymentReference = payerPaymentReference,
-                                    payerAlias = settings.payerAlias,
-                                    payeeAlias = payeeAlias,
-                                    payeeSSN = payeeSSN,
-                                    amount = requireAmount(amount),
-                                    currency = "SEK",
-                                    payoutType = "PAYOUT",
-                                    message = message.ifBlank { null },
-                                    instructionDate = DateUtils.getInstructionDate(),
-                                    signingCertificateSerialNumber = signing.serialHex
+                            try {
+                                // show initial row
+                                live = PayoutLiveStatus(
+                                    uuid = "…", // temp, replaced below
+                                    amount = "${amount} kr",
+                                    receiver = payeeAlias,
+                                    status = "CREATING",
+                                    loading = true
                                 )
 
-                                val canonical = canonicalFromPayload(payload, Json {
-                                    encodeDefaults = true; explicitNulls = false; prettyPrint =
-                                    false
-                                })
-                                val signature = signSwish(canonical, signing.privateKey)
-                                isSigValidBeforeSend =
-                                    verifySwishSignature(canonical, signature, signing.publicKey)
-
-                                val req = PayoutRequest(
-                                    payload = payload,
-                                    callbackUrl = settings.callbackUrl.ifBlank { null },
-                                    callbackIdentifier = uuid,
-                                    signature = signature
-                                )
-
-                                // CREATE
-                                val create = client.postPayout(req)
-                                if (create.status == 201) {
-                                    live =
-                                        live?.copy(status = "CREATED", loading = true, note = null)
-                                } else {
-                                    live = live?.copy(
-                                        status = "ERROR",
-                                        loading = false,
-                                        note = "Skapa misslyckades (${create.status})"
+                                val resText = runCatching {
+                                    val signing = loadSigningMaterial(
+                                        settings.signingP12Path,
+                                        signingPass.toCharArray()
                                     )
-                                    return@runCatching "create: ${create.status}"
+                                    val ssl =
+                                        buildSslContext(settings.tlsP12Path, tlsPass.toCharArray())
+                                    val client = SwishClient(settings.baseUrl, ssl)
+
+                                    val uuid = UUID.randomUUID().toString().replace("-", "").uppercase()
+                                    live = live?.copy(uuid = uuid)
+
+                                    val payload = PayoutPayload(
+                                        payoutInstructionUUID = uuid,
+                                        payerPaymentReference = payerPaymentReference,
+                                        payerAlias = settings.payerAlias,
+                                        payeeAlias = payeeAlias,
+                                        payeeSSN = payeeSSN,
+                                        amount = requireAmount(amount),
+                                        currency = "SEK",
+                                        payoutType = "PAYOUT",
+                                        message = message.ifBlank { null },
+                                        instructionDate = DateUtils.getInstructionDate(),
+                                        signingCertificateSerialNumber = signing.serialHex
+                                    )
+
+                                    val canonical = canonicalFromPayload(payload, Json {
+                                        encodeDefaults = true; explicitNulls = false; prettyPrint =
+                                        false
+                                    })
+                                    val signature = signSwish(canonical, signing.privateKey)
+                                    isSigValidBeforeSend =
+                                        verifySwishSignature(canonical, signature, signing.publicKey)
+
+                                    val req = PayoutRequest(
+                                        payload = payload,
+                                        callbackUrl = settings.callbackUrl.ifBlank { null },
+                                        callbackIdentifier = uuid,
+                                        signature = signature
+                                    )
+
+                                    // CREATE
+                                    val create = client.postPayout(req)
+                                    if (create.status == 201) {
+                                        live =
+                                            live?.copy(status = "CREATED", loading = true, note = null)
+                                    } else {
+                                        live = live?.copy(
+                                            status = "ERROR",
+                                            loading = false,
+                                            note = "Skapa misslyckades (${create.status})"
+                                        )
+                                        return@runCatching "create: ${create.status}"
+                                    }
+
+                                    // POLL
+                                    live = live?.copy(
+                                        status = "POLLING",
+                                        loading = true,
+                                        note = "Väntar på status…"
+                                    )
+                                    val finalRes = client.pollPayoutUntilDone(uuid)
+                                    val body = finalRes.body
+
+                                    val status = when {
+                                        body.contains("\"status\":\"PAID\"") -> "PAID"
+                                        body.contains("\"status\":\"DEBITED\"") -> "DEBITED"
+                                        body.contains("\"status\":\"ERROR\"") -> "ERROR"
+                                        else -> "CREATED"
+                                    }
+                                    live = live?.copy(
+                                        status = status,
+                                        loading = false,
+                                        note = if (status == "ERROR") "Fel vid utbetalning" else null
+                                    )
+
+                                    "OK"
+                                }.getOrElse {
+                                    live =
+                                        live?.copy(status = "ERROR", loading = false, note = it.message)
+                                    "Error"
                                 }
 
-                                // POLL
-                                live = live?.copy(
-                                    status = "POLLING",
-                                    loading = true,
-                                    note = "Väntar på status…"
-                                )
-                                val finalRes = client.pollPayoutUntilDone(uuid)
-                                val body = finalRes.body
+                                result = resText
 
-                                val status = when {
-                                    body.contains("\"status\":\"PAID\"") -> "PAID"
-                                    body.contains("\"status\":\"DEBITED\"") -> "DEBITED"
-                                    body.contains("\"status\":\"ERROR\"") -> "ERROR"
-                                    else -> "CREATED"
-                                }
-                                live = live?.copy(
-                                    status = status,
-                                    loading = false,
-                                    note = if (status == "ERROR") "Fel vid utbetalning" else null
-                                )
-
-                                "OK"
-                            }.getOrElse {
-                                live =
-                                    live?.copy(status = "ERROR", loading = false, note = it.message)
-                                "Error"
+                            } finally {
+                                signingPass = ""
+                                tlsPass = ""
+                                isSubmitting = false
                             }
 
-                            result = resText
                         }
 
                     },
+                    enabled = signingPass.isNotBlank() && tlsPass.isNotBlank() && !isSubmitting,
                     modifier = Modifier.weight(1f)
                 ) { Text("Skicka utbetalning") }
             }

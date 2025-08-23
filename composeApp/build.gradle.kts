@@ -60,7 +60,7 @@ compose.desktop {
                 "jdk.crypto.ec"    // <-- TLS with EC certs
             )
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "AstonMartinPays"
+            packageName = "NordbilPay"
             packageVersion = "1.0.0"
             macOS {
                 iconFile.set(project.layout.projectDirectory.file("icons/macos.icns"))

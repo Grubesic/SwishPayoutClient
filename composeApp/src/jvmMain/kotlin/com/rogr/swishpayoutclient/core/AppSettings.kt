@@ -12,10 +12,10 @@ import java.nio.file.StandardOpenOption
 @Serializable
 data class AppSettings(
     val environment: String = "Test",
-    val baseUrl: String = "https://<swish-test-host>/payouts",
+    val baseUrl: String = "https://mss.cpc.getswish.net/swish-cpcapi/api/v1/payouts",
     val tlsP12Path: String = "",
     val signingP12Path: String = "",
-    val callbackUrl: String = "https://example.com/callback",
+    val callbackUrl: String = "",
     val payerAlias: String = "",
     val defaultCurrency: String = "SEK"
 ) {
