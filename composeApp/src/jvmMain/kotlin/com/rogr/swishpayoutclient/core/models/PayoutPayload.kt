@@ -8,7 +8,7 @@ data class PayoutPayload(
     val payerPaymentReference: String,
     val payerAlias: String,
     val payeeAlias: String,
-    val payeeSSN: String? = null,
+    val payeeSSN: String,
     val amount: String,
     val currency: String = "SEK",
     val payoutType: String = "PAYOUT",

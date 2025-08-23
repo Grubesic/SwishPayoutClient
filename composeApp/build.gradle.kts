@@ -28,6 +28,8 @@ kotlin {
             implementation(libs.ktor.client.logging)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.ktor.client.content.negotiation)
+
+
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -35,6 +37,7 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
+
             //implementation("io.ktor:ktor-client-logging-jvm:2.3.12")
         }
     }
