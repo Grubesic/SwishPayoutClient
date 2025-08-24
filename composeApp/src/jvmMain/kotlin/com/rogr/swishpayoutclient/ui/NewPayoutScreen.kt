@@ -9,6 +9,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.rogr.swishpayoutclient.core.*
 import com.rogr.swishpayoutclient.core.models.*
+import com.rogr.swishpayoutclient.core.pkcs11.Pkcs11Bundled
+import com.rogr.swishpayoutclient.core.pkcs11.buildSslContextFromPkcs11
+import com.rogr.swishpayoutclient.core.pkcs11.getKeyAndCert
+import com.rogr.swishpayoutclient.core.pkcs11.loadPkcs11KeyStore
+import com.rogr.swishpayoutclient.core.pkcs11.x509SerialHex
 import com.rogr.swishpayoutclient.service.SwishClient
 import com.rogr.swishpayoutclient.util.DateUtils
 import kotlinx.coroutines.Dispatchers
@@ -28,8 +33,7 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
     var message by remember { mutableStateOf("Message to the recipient.") }
     var payerPaymentReference by remember { mutableStateOf("payerRef") }
 
-    var tlsPass by remember { mutableStateOf("") }
-    var signingPass by remember { mutableStateOf("") }
+    var pivPin by remember { mutableStateOf("") }
 
     var previewPayload by remember { mutableStateOf("") }
     var previewSig by remember { mutableStateOf("") }
@@ -91,18 +95,13 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
 
             HorizontalDivider()
 
-            // Passwords side-by-side
+
+            // PIV PIN (YubiKey)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PasswordField(
-                    value = tlsPass,
-                    onValueChange = { tlsPass = it },
-                    label = "TLS-lösenord",
-                    modifier = Modifier.weight(1f)
-                )
-                PasswordField(
-                    value = signingPass,
-                    onValueChange = { signingPass = it },
-                    label = "Signerings-lösenord",
+                    value = pivPin,
+                    onValueChange = { pivPin = it },
+                    label = "PIV PIN (YubiKey)",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -112,12 +111,11 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                 Button(
                     onClick = {
                         isSubmitting = true
-
                         scope.launch(Dispatchers.IO) {
                             try {
-                                // show initial row
+                                // initial row
                                 live = PayoutLiveStatus(
-                                    uuid = "…", // temp, replaced below
+                                    uuid = "…",
                                     amount = "${amount} kr",
                                     receiver = payeeAlias,
                                     status = "CREATING",
@@ -125,12 +123,22 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                                 )
 
                                 val resText = runCatching {
-                                    val signing = loadSigningMaterial(
-                                        settings.signingP12Path,
-                                        signingPass.toCharArray()
+                                    // --- YubiKey PKCS#11: signing (9c) + mTLS (9a) ---
+                                    val pkcs11Path = Pkcs11Bundled.loadPkcs11Library()
+                                    val pin = pivPin.toCharArray()
+                                    val p11 = loadPkcs11KeyStore(pkcs11Path, pin)
+
+                                    // 9c = signing key/cert
+                                    val signKC = getKeyAndCert(p11.keyStore, "X.509 Certificate for Digital Signature", pin)
+                                    val serialHex = x509SerialHex(signKC.cert)
+
+                                    // 9a = mTLS cert for TLS handshake
+                                    val ssl = buildSslContextFromPkcs11(
+                                        ks = p11.keyStore,
+                                        pin = pin,
+                                        preferredAlias = "X.509 Certificate for PIV Authentication",
+                                        trustStore = null
                                     )
-                                    val ssl =
-                                        buildSslContext(settings.tlsP12Path, tlsPass.toCharArray())
                                     val client = SwishClient(settings.baseUrl, ssl)
 
                                     val uuid = UUID.randomUUID().toString().replace("-", "").uppercase()
@@ -147,16 +155,16 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                                         payoutType = "PAYOUT",
                                         message = message.ifBlank { null },
                                         instructionDate = DateUtils.getInstructionDate(),
-                                        signingCertificateSerialNumber = signing.serialHex
+                                        signingCertificateSerialNumber = serialHex
                                     )
 
                                     val canonical = canonicalFromPayload(payload, Json {
-                                        encodeDefaults = true; explicitNulls = false; prettyPrint =
-                                        false
+                                        encodeDefaults = true; explicitNulls = false; prettyPrint = false
                                     })
-                                    val signature = signSwish(canonical, signing.privateKey)
-                                    isSigValidBeforeSend =
-                                        verifySwishSignature(canonical, signature, signing.publicKey)
+
+                                    // Sign on-device (YubiKey)
+                                    val signature = signSwish(canonical, signKC.privateKey)
+                                    isSigValidBeforeSend = verifySwishSignature(canonical, signature, signKC.cert.publicKey)
 
                                     val req = PayoutRequest(
                                         payload = payload,
@@ -168,57 +176,41 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                                     // CREATE
                                     val create = client.postPayout(req)
                                     if (create.status == 201) {
-                                        live =
-                                            live?.copy(status = "CREATED", loading = true, note = null)
+                                        live = live?.copy(status = "CREATED", loading = true, note = null)
                                     } else {
-                                        live = live?.copy(
-                                            status = "ERROR",
-                                            loading = false,
-                                            note = "Skapa misslyckades (${create.status})"
-                                        )
+                                        live = live?.copy(status = "ERROR", loading = false, note = "Skapa misslyckades (${create.status})")
                                         return@runCatching "create: ${create.status}"
                                     }
 
                                     // POLL
-                                    live = live?.copy(
-                                        status = "POLLING",
-                                        loading = true,
-                                        note = "Väntar på status…"
-                                    )
+                                    live = live?.copy(status = "POLLING", loading = true, note = "Väntar på status…")
                                     val finalRes = client.pollPayoutUntilDone(uuid)
                                     val body = finalRes.body
-
                                     val status = when {
-                                        body.contains("\"status\":\"PAID\"") -> "PAID"
+                                        body.contains("\"status\":\"PAID\"")    -> "PAID"
                                         body.contains("\"status\":\"DEBITED\"") -> "DEBITED"
-                                        body.contains("\"status\":\"ERROR\"") -> "ERROR"
-                                        else -> "CREATED"
+                                        body.contains("\"status\":\"ERROR\"")   -> "ERROR"
+                                        else                                    -> "CREATED"
                                     }
                                     live = live?.copy(
                                         status = status,
                                         loading = false,
                                         note = if (status == "ERROR") "Fel vid utbetalning" else null
                                     )
-
                                     "OK"
                                 }.getOrElse {
-                                    live =
-                                        live?.copy(status = "ERROR", loading = false, note = it.message)
+                                    live = live?.copy(status = "ERROR", loading = false, note = it.message)
                                     "Error"
                                 }
 
                                 result = resText
-
                             } finally {
-                                signingPass = ""
-                                tlsPass = ""
+                                pivPin = "" // clear PIN from memory/UI
                                 isSubmitting = false
                             }
-
                         }
-
                     },
-                    enabled = signingPass.isNotBlank() && tlsPass.isNotBlank() && !isSubmitting,
+                    enabled = pivPin.isNotBlank() && !isSubmitting,
                     modifier = Modifier.weight(1f)
                 ) { Text("Skicka utbetalning") }
             }

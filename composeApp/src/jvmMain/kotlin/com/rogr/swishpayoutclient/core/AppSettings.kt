@@ -17,7 +17,8 @@ data class AppSettings(
     val signingP12Path: String = "",
     val callbackUrl: String = "",
     val payerAlias: String = "",
-    val defaultCurrency: String = "SEK"
+    val defaultCurrency: String = "SEK",
+
 ) {
     companion object {
         private val json = Json { prettyPrint = true; encodeDefaults = true }
