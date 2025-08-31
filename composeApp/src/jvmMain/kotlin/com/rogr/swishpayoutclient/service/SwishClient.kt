@@ -20,9 +20,54 @@ import javax.net.ssl.SSLContext
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.delay
+import java.io.PrintStream
 
 class SwishClient(private val baseUrl: String, private val sslContext: SSLContext) {
     val logFile: Path = Path.of(System.getProperty("user.home"), "swish-client.log")
+
+    companion object {
+        init {
+            System.setProperty("javax.net.debug", "ssl,handshake,record,verbose,certpath")
+            System.err.println("javax.net.debug=" + System.getProperty("javax.net.debug"))
+            System.setProperty("jdk.tls.client.protocols", "TLSv1.2")
+        }
+    }
+
+    init {
+        val pid = try { java.lang.ProcessHandle.current().pid() } catch (_: Throwable) { -1 }
+        // 1) Prove init ran & where we're writing
+        java.nio.file.Files.writeString(
+            logFile,
+            "=== SwishClient init (pid=$pid) writing to ${logFile}\n",
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.APPEND,
+            java.nio.file.StandardOpenOption.WRITE
+        )
+
+        val ps = PrintStream(
+            Files.newOutputStream(
+                logFile,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND,
+                StandardOpenOption.WRITE
+            ),
+            /* autoFlush = */ true,
+            /* charset    = */ Charsets.UTF_8.name()
+        )
+        System.setErr(ps)
+        System.setOut(ps)
+        System.err.println(">>> redirected stderr")
+        System.out.println(">>> redirected stdout")
+
+        val s = (javax.net.ssl.SSLSocketFactory.getDefault()
+            .createSocket("example.com", 443) as javax.net.ssl.SSLSocket)
+        s.startHandshake()
+        s.close()
+        System.out.println(("javax.net.debug=" + System.getProperty("javax.net.debug")))
+        System.out.println(("Running on Java " + System.getProperty("java.version")))
+
+
+    }
 
     private val client = HttpClient(Java) {
         engine {
@@ -54,15 +99,15 @@ class SwishClient(private val baseUrl: String, private val sslContext: SSLContex
 
     }
 
-   /* suspend fun postPayout(req: PayoutRequest): PayoutResponse {
-        //val json = Json.encodeToString(req)
-        val response = client.post(baseUrl) {
-            contentType(ContentType.Application.Json)
-            setBody(req)
-        }
-        val body = response.bodyAsText()
-        return PayoutResponse(response.status.isSuccess(), response.status.value, body)
-    }*/
+    /* suspend fun postPayout(req: PayoutRequest): PayoutResponse {
+         //val json = Json.encodeToString(req)
+         val response = client.post(baseUrl) {
+             contentType(ContentType.Application.Json)
+             setBody(req)
+         }
+         val body = response.bodyAsText()
+         return PayoutResponse(response.status.isSuccess(), response.status.value, body)
+     }*/
 
     suspend fun postPayout(req: PayoutRequest): CreatePayoutResult {
         val response = client.post(baseUrl) {

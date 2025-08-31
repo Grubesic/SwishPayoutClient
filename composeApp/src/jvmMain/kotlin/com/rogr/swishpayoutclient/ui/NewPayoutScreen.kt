@@ -19,6 +19,7 @@ import com.rogr.swishpayoutclient.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 
@@ -137,7 +138,10 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                                         ks = p11.keyStore,
                                         pin = pin,
                                         preferredAlias = "X.509 Certificate for PIV Authentication",
-                                        trustStore = null
+                                        trustStore = null,
+                                        pemChainPath = Path.of("/Users/robertgrubesic/Desktop/trust.pem")
+
+
                                     )
                                     val client = SwishClient(settings.baseUrl, ssl)
 

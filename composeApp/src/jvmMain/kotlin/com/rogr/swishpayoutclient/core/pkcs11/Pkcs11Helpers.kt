@@ -3,10 +3,14 @@ package com.rogr.swishpayoutclient.core.pkcs11
 
 import java.net.Socket
 import java.nio.file.Files
+import java.nio.file.Path
 import java.security.*
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Locale
 import javax.net.ssl.*
+import kotlin.collections.isNotEmpty
+import kotlin.collections.orEmpty
 
 data class KeyAndCert(val privateKey: PrivateKey, val cert: X509Certificate)
 class Pkcs11Handle(val provider: Provider, val keyStore: KeyStore)
@@ -106,21 +110,113 @@ private class AliasKeyManager(
     override fun getPrivateKey(alias: String?) = delegate.getPrivateKey(alias)
 }
 
-/** Build TLSv1.2 mTLS context using a fixed card alias (e.g. "9a"). */
+// --- NEW: read multiple X.509 certs from a PEM file (chain file) ---
+private fun readPemCertificates(path: Path): List<X509Certificate> {
+    val cf = CertificateFactory.getInstance("X.509")
+    Files.newInputStream(path).use { rawIn ->
+        // The cert factory can parse concatenated PEMs if we feed one-by-one blocks
+        val text = rawIn.readAllBytes().toString(Charsets.US_ASCII)
+        val blocks = Regex("-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----")
+            .findAll(text).map { it.value }.toList()
+        if (blocks.isEmpty()) return emptyList()
+        return blocks.map { block ->
+            cf.generateCertificate(block.byteInputStream(Charsets.US_ASCII)) as X509Certificate
+        }
+    }
+}
+
+// --- NEW: key manager that appends/repairs the chain using provided intermediates ---
+private class ChainAugmentingKeyManager(
+    private val delegate: X509ExtendedKeyManager,
+    // Provide only intermediates here (root allowed; we’ll drop it)
+    private val extras: List<X509Certificate>
+) : X509ExtendedKeyManager() {
+
+    override fun getClientAliases(keyType: String?, issuers: Array<Principal>?) =
+        delegate.getClientAliases(keyType, issuers)
+
+    override fun chooseClientAlias(
+        keyTypes: Array<String>?, issuers: Array<Principal>?, socket: Socket?
+    ) = delegate.chooseClientAlias(keyTypes, issuers, socket)
+
+    override fun getServerAliases(keyType: String?, issuers: Array<Principal>?) =
+        delegate.getServerAliases(keyType, issuers)
+
+    override fun chooseServerAlias(
+        keyType: String?, issuers: Array<Principal>?, socket: Socket?
+    ) = delegate.chooseServerAlias(keyType, issuers, socket)
+
+    override fun chooseEngineClientAlias(
+        keyTypes: Array<String>?, issuers: Array<Principal>?, engine: SSLEngine?
+    ) = delegate.chooseEngineClientAlias(keyTypes, issuers, engine)
+
+    override fun chooseEngineServerAlias(
+        keyType: String?, issuers: Array<Principal>?, engine: SSLEngine?
+    ) = delegate.chooseEngineServerAlias(keyType, issuers, engine)
+
+    override fun getPrivateKey(alias: String?) = delegate.getPrivateKey(alias)
+
+    override fun getCertificateChain(alias: String?): Array<X509Certificate>? {
+        val base = delegate.getCertificateChain(alias) ?: return null
+        if (base.isEmpty()) return base
+
+        val leaf = base[0]
+
+        // Pool = existing chain (minus leaf) + provided extras; drop self-signed roots and duplicates
+        val pool = (base.drop(1) + extras)
+            .filterNot { it.subjectX500Principal == it.issuerX500Principal } // drop roots
+            .distinctBy { it.subjectX500Principal to it.serialNumber }
+
+        val bySubject = pool.associateBy { it.subjectX500Principal }
+
+        // Walk issuer -> subject to build an ordered chain leaf -> ... -> (up to provided top)
+        val ordered = ArrayList<X509Certificate>(1 + pool.size)
+        ordered += leaf
+        var cur = leaf
+        while (true) {
+            val next = bySubject[cur.issuerX500Principal] ?: break
+            if (ordered.any { it == next }) break // loop guard
+            ordered += next
+            cur = next
+        }
+
+        return ordered.toTypedArray()
+    }
+}
+
+// --- UPDATED: overload that accepts a PEM chain file path ---
+/** Build TLSv1.2 mTLS context using a fixed card alias (e.g. "9a"), and optionally a PEM file with intermediates. */
 fun buildSslContextFromPkcs11(
     ks: KeyStore,
     pin: CharArray,
     preferredAlias: String = "9a",
-    trustStore: KeyStore? = null
+    trustStore: KeyStore? = null,
+    pemChainPath: Path? = null // <-- pass your .pem (leaf+intermediates or just intermediates)
 ): SSLContext {
     val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
     kmf.init(ks, pin)
-    val kms = kmf.keyManagers.map {
-        if (it is X509ExtendedKeyManager) AliasKeyManager(it, preferredAlias) else it
-    }.toTypedArray()
+
+    // Wrap order: delegate -> alias-forcing -> chain-augmenting (if PEM provided)
+    var km: X509ExtendedKeyManager? = null
+    for (m in kmf.keyManagers) {
+        if (m is X509ExtendedKeyManager) {
+            km = m
+            break
+        }
+    }
+    requireNotNull(km) { "No X509ExtendedKeyManager from KeyManagerFactory" }
+
+    val withAlias = AliasKeyManager(km, preferredAlias)
+    val extras = pemChainPath?.let { readPemCertificates(it) }.orEmpty()
+    val finalKm: X509ExtendedKeyManager =
+        if (extras.isNotEmpty()) ChainAugmentingKeyManager(withAlias, extras) else withAlias
+
+    val kms: Array<KeyManager> = arrayOf(finalKm)
 
     val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
     tmf.init(trustStore) // null => system trust
 
-    return SSLContext.getInstance("TLSv1.2").apply { init(kms, tmf.trustManagers, null) }
+    return SSLContext.getInstance("TLSv1.2").apply {
+        init(kms, tmf.trustManagers, null)
+    }
 }
