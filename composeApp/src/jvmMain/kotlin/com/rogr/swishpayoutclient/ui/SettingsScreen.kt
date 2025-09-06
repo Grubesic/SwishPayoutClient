@@ -20,15 +20,16 @@ fun SettingsScreen(modifier: Modifier, insets: PaddingValues) {
         OutlinedTextField(settings.environment, { settings = settings.copy(environment = it) }, label = { Text("Environment") })
         OutlinedTextField(settings.baseUrl, { settings = settings.copy(baseUrl = it) }, label = { Text("Base URL") })
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(settings.tlsP12Path, { settings = settings.copy(tlsP12Path = it) }, label = { Text("TLS .p12 path") }, modifier = Modifier.weight(1f))
-            Button(onClick = { chooseFile()?.let { settings = settings.copy(tlsP12Path = it) } }) { Text("Browse") }
-        }
-        OutlinedTextField(tlsPass, { tlsPass = it }, label = { Text("TLS password") })
+
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(settings.signingP12Path, { settings = settings.copy(signingP12Path = it) }, label = { Text("Signing .p12 path") }, modifier = Modifier.weight(1f))
-            Button(onClick = { chooseFile()?.let { settings = settings.copy(signingP12Path = it) } }) { Text("Browse") }
+            OutlinedTextField(
+                value = settings.trustPemChainPath,
+                onValueChange = { settings = settings.copy(trustPemChainPath = it) },
+                label = { Text("Trust PEM chain (optional)") },
+                modifier = Modifier.weight(1f)
+            )
+            Button(onClick = { chooseFile()?.let { settings = settings.copy(trustPemChainPath = it) } }) { Text("Browse") }
         }
 
         OutlinedTextField(settings.callbackUrl, { settings = settings.copy(callbackUrl = it) }, label = { Text("Callback URL") })

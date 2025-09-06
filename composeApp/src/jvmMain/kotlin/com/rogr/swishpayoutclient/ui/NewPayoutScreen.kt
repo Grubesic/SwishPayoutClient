@@ -133,13 +133,18 @@ fun NewPayoutScreen(modifier: Modifier, insets: PaddingValues) {
                                     val signKC = getKeyAndCert(p11.keyStore, "X.509 Certificate for Digital Signature", pin)
                                     val serialHex = x509SerialHex(signKC.cert)
 
+                                    val trustPathOpt: Path? = settings.trustPemChainPath
+                                        .takeIf { it.isNotBlank() }
+                                        ?.let { Path.of(it) }
+
                                     // 9a = mTLS cert for TLS handshake
                                     val ssl = buildSslContextFromPkcs11(
                                         ks = p11.keyStore,
                                         pin = pin,
                                         preferredAlias = "X.509 Certificate for PIV Authentication",
                                         trustStore = null,
-                                        pemChainPath = Path.of("/Users/robertgrubesic/Desktop/trust.pem")
+                                        pemChainPath = trustPathOpt
+                                        //pemChainPath = Path.of("/Users/robertgrubesic/Desktop/trust.pem")
 
 
                                     )

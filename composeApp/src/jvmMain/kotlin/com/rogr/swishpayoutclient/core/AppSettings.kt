@@ -18,6 +18,7 @@ data class AppSettings(
     val callbackUrl: String = "",
     val payerAlias: String = "",
     val defaultCurrency: String = "SEK",
+    val trustPemChainPath: String = ""
 
 ) {
     companion object {
