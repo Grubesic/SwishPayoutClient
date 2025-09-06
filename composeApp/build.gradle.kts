@@ -57,12 +57,12 @@ compose.desktop {
                 "java.naming",
                 "java.xml",
                 "java.net.http",   // <-- REQUIRED for Ktor Java engine
-                "jdk.crypto.ec"    // <-- TLS with EC certs
+                "jdk.crypto.ec",
+                "jdk.crypto.cryptoki"
             )
             jvmArgs(
                 "--add-modules=jdk.crypto.cryptoki",
                 "--add-exports=java.base/sun.security.pkcs11=ALL-UNNAMED",
-                "--add-modules=jdk.crypto.cryptoki",
                 "-Xmx512m",
                 "-XX:ErrorFile=" + System.getProperty("user.home") + "/hs_err_pid%p.log",
                 "-XX:+ShowCodeDetailsInExceptionMessages"

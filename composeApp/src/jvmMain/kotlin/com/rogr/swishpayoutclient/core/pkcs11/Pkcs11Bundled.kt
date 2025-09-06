@@ -21,7 +21,7 @@ object Pkcs11Bundled {
         }
 
         // 2) Env var override: YKCS11_PATH=/custom/libykcs11.dylib
-        System.getenv("YKCS11_PATH")?.trim()?.takeIf { it.isNotEmpty() }?.let { p ->
+        System.getenv("gr")?.trim()?.takeIf { it.isNotEmpty() }?.let { p ->
             if (Files.isRegularFile(Paths.get(p))) return p
         }
 
